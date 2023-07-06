@@ -1,0 +1,746 @@
+---
+title: "CS5811 Assignment"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-03-10"
+---
+
+```{r}
+# libraries
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(corrplot)
+library(dplyr)
+library(corrr)
+library(ggcorrplot)
+library(corrplot)
+library(Hmisc)
+library(tidyverse)
+library(neuralnet)
+library(neuralnet)
+library(caret)
+library(dplyr)
+```
+
+
+# # Research Question:  Prediction of CO2 Emissions in Vehicles given the independant variables. (Subject to change, potentially)
+
+# Data Preperation
+
+```{r}
+fuelcon.df <- read.csv("Fuel_Consumption_2000-2022.csv.csv")
+# fuel consumption data frame read into variable
+```
+
+Due to the size of the data frame (25000 rows), we need to subsample the data properly. For this, we can subset the data to include years 2016-2022.
+
+```{r}
+str(fuelcon.df)
+```
+
+For the prediction of data via regression, sub-sample data is not taken as it results in loss of information and statistical power and result in incorrect prediction. So, now we can commence data cleaning.
+sum is used for to check the number of missing values in the dataset
+# Data Cleaning
+
+```{r}
+#sum function is used to check any missing values
+sum(is.na(fuelcon.df))
+summary((fuelcon.df))
+
+```
+
+The data presented includes the following variables:
+- YEAR = year of documentation.
+- MAKE = Company that produced the vehicle in a row.
+- MODEL = Model of the vehicle in the observation.
+- VEHICLE.CLASS = class of vehicle.
+- ENGINE.SIZE = Size of vehicle's motor engine.
+- CYLINDERS = Number of Cylinders
+- TRANSMISSION = Vehicle's transmission
+- FUEL = Type of fuel used by vehicle.
+- FUEL.CONSUMPTION = How much fuel was consumed by the vehicle.
+- HWY..L.100.km. = Highway rating in liters per 100km (L/100km)
+- COMB..L.100.km. = Combined rating of city (55%) and Highway (45%) in liters per 100km (L/100km)
+- COMB..mpg =  Combined rating of city and highway in miles per gallon (mpg)
+- EMISSIONS = CO2 Emissions (g/km)
+
+According to the summary, there do not seem to be any missing values. While we do have some outliers, we can further look into these outliers to determine the plausability. However, we have to check our categorical variables first.
+
+```{r}
+table(fuelcon.df$MAKE)
+```
+
+It should be noted that the values seem to be duplicated more than once. So we need to get rid of duplicate values by combining them.
+
+```{r}
+fuelcon.df$MAKE <- toupper(fuelcon.df$MAKE) #turn MAKE values into upper case.
+```
+
+```{r}
+table(fuelcon.df$MAKE)
+```
+By turning all values into upper case, we can have proper levels in the MAKE column without duplicates.
+
+```{r}
+table(fuelcon.df$MODEL)
+table(fuelcon.df$VEHICLE.CLASS)
+table(fuelcon.df$FUEL)
+table(fuelcon.df$TRANSMISSION)
+```
+
+Let's apply the same thing to the vehicle.class column and the model column.
+
+```{r}
+fuelcon.df$MODEL <- toupper(fuelcon.df$MODEL)
+fuelcon.df$VEHICLE.CLASS <- toupper(fuelcon.df$VEHICLE.CLASS)
+```
+
+```{r}
+table(fuelcon.df$VEHICLE.CLASS)
+table(fuelcon.df$MODEL)
+```
+
+Now our levels has significantly decreased with no duplicates.
+
+```{r}
+table(fuelcon.df$FUEL)
+```
+The fuel column now looks more readable than it was before.
+the code below shows the outliers in each variable via box plots.
+```{r}
+# sapply function is used to identify which coloumn dataset are numeric
+num_cols <- sapply(fuelcon.df, is.numeric)
+
+# the variable below subsets the dataset keeping only the numeric coloumns
+
+df_num <- fuelcon.df[,num_cols]
+
+# boxplot to identify outliers 
+
+boxplot(df_num$ENGINE.SIZE)
+boxplot(df_num$CYLINDERS)
+boxplot(df_num$FUEL.CONSUMPTION)
+boxplot(df_num$HWY..L.100.km.)
+boxplot(df_num$COMB..mpg.)
+boxplot(df_num$EMISSIONS)
+# Set up the layout and margins for the plots
+par(mfrow = c(4, 6), mar = c(2, 2, 2, 1))
+
+# Loop through the columns and create a boxplot for each column
+for (i in 1:ncol(df_num)) {
+  boxplot(df_num[, i], main = names(df_num)[i], xlab = names(df_num)[i])
+}
+```
+This code shows the possible values which are the outliers in the given dataset.
+The outliers found are stored and saved in the variable denoted as outliers(1,2,3,4,5) and (with an underscore and coloumn name)
+```{r}
+#The boxplot() function is called again for each numeric variable, but with the plot=FALSE argument to prevent plotting. The $out component of the output is used to store the outlier values for each variable in separate variables (outliers, outliers1, etc.)
+
+outliers <-boxplot(df_num$ENGINE.SIZE, plot=FALSE)$out
+outliers1 <-boxplot(df_num$CYLINDERS, plot=FALSE)$out
+outliers2 <-boxplot(df_num$FUEL.CONSUMPTION, plot=FALSE)$out
+outliers3 <-boxplot(df_num$HWY..L.100.km., plot=FALSE)$out
+outliers4 <-boxplot(df_num$COMB..mpg., plot=FALSE)$out
+outliers5 <-boxplot(df_num$EMISSIONS, plot=FALSE)$out
+
+#The which() function identifies the rows containing outliers, which need to be eliminated from the data. 
+outliers_engine_size <- which(df_num$ENGINE.SIZE %in% outliers)
+outliers_cylinders <- which(df_num$CYLINDERS %in% outliers1)
+outliers_fuel_consumption <- which(df_num$FUEL.CONSUMPTION %in% outliers2)
+outliers_hwy <- which(df_num$HWY..L.100.km. %in% outliers3)
+outliers_comb_mpg <- which(df_num$COMB..mpg. %in% outliers4)
+outliers_emissions <- which(df_num$EMISSIONS %in% outliers5)
+```
+
+The function below combines all the row indexes into a single vector (all_outliers) 
+
+```{r}
+# Combine all outlier row indexes
+all_outliers <- unique(c(outliers_engine_size, outliers_cylinders, outliers_fuel_consumption, outliers_hwy, outliers_comb_mpg, outliers_emissions))
+```
+
+The function below removes all outliers from the dataset
+```{r}
+# Remove all outlier rows from the dataset
+z <- df_num
+z <- z[-all_outliers, ]
+boxplot(df_num$HWY..L.100.km)
+boxplot(z$HWY..L.100.km)
+
+```
+
+Corrplot is used to identify patterns or relationships between the different variables
+
+```{r}
+library(corrplot)
+#Correlation matrix for numerical values
+corrplot(cor(z), method="circle")
+```
+
+A significant association exists between the dependent variable EMISSIONS and other columns within the dataframe.
+
+```{r}
+#the function pair helps to generate a scatter plot of the numerical values in the dataset
+pairs(z)
+```
+
+The function below helps to identify any erros which can be cleaned before proceeding to the analysis
+
+```{r}
+unique(fuelcon.df$FUEL)
+```
+
+```{r}
+opar<-par(no.readonly = TRUE)
+```
+
+```{r}
+opar <- par(no.readonly = TRUE)
+par(mfrow = c(2,3))
+hist(z[, 1], main = names(z)[1], xlab = names(z)[1])
+hist(z[, 2], main = names(z)[2], xlab = names(z)[2])
+hist(z[, 3], main = names(z)[3], xlab = names(z)[3])
+hist(z[, 4], main = names(z)[4], xlab = names(z)[4])
+hist(z[, 5], main = names(z)[5], xlab = names(z)[5])
+hist(z[, 6], main = names(z)[6], xlab = names(z)[6])
+hist(z[, 7], main = names(z)[7], xlab = names(z)[7])
+hist(z[, 8], main = names(z)[8], xlab = names(z)[8])
+par(opar)
+```
+
+Selecting the numerical data to do the correlation plot
+
+
+The function calculates the correlation matrix and stores in res.
+```{r}
+res <- cor(z)
+```
+
+The function below computes the correlarion matrix and displays
+```{r}
+cor(z)
+```
+
+Calculating p-value to see whether the correlation is significant
+
+```{r}
+
+rcorr(as.matrix(z))
+```
+
+Visualising the correlation. it plots a hierarchical clustered heatmap of the upper-triangle correlation matrix using res.
+
+```{r}
+corrplot(res, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+```
+
+
+The function below plots a correlation matrix of newmobile_df using circles to represent correlation coefficients.
+
+Explore the correlation between variables
+```{r}
+corrplot(cor(z), method="circle")
+```
+
+
+Clustering Analysis:-------------------------------- 
+
+
+The code below uses k-means clustering on a mobile dataset to determine the ideal number of clusters. It begins by setting a random seed and loading necessary libraries. Relevant variables are selected and scaled before applying Principal Component Analysis (PCA). WCSS is calculated for various cluster sizes to determine the optimal number of clusters using the elbow method. Finally, k-means clustering is performed with the ideal number of clusters, and the results are printed and plotted.
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Load required libraries
+library(cluster)
+
+# Select the variables from the z dataset
+emission_vars <- z[,c("YEAR", "ENGINE.SIZE", "CYLINDERS", "FUEL.CONSUMPTION", "HWY..L.100.km.", "COMB..L.100.km.", "COMB..mpg.", "EMISSIONS")]
+
+# Scale the data to have zero mean and unit variance
+scaled_data <- scale(emission_vars)
+
+# Perform PCA
+pca <- prcomp(scaled_data)
+
+# Calculate the within-cluster sum of squares (WCSS) for k values ranging from 1 to 10
+wcss <- vector(mode = "numeric", length = 10)
+for (i in 1:10) {
+  km <- kmeans(pca$x[, 1:2], centers = i, nstart = 10)
+  wcss[i] <- km$tot.withinss
+}
+
+# Plot the WCSS against the number of clusters
+plot(1:10, wcss, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Clusters", ylab = "WCSS")
+
+# Add a vertical line at the elbow point
+elbow <- kmeans(pca$x[, 1:2], centers = 3, nstart = 10)
+abline(v = 3, lty = 2, col = "red")
+
+# Print the elbow point
+cat("Elbow point is at k =", elbow$betweenss/elbow$totss * nrow(scaled_data))
+
+# Perform k-means clustering with the optimal number of clusters (k=3 in this case)
+kmeans_results <- kmeans(pca$x[, 1:2], centers = 3, nstart = 25)
+
+# Plot the clustered data points and cluster centroids
+plot(pca$x[, 1:2], col = kmeans_results$cluster)
+points(kmeans_results$centers, col = 1:3, pch = 8, cex = 2)
+
+# Print the cluster assignments
+print(kmeans_results$cluster)
+
+```
+
+The output shows the optimal number of clusters, cluster assignment and visual representation of the clustered data points.
+
+```{r}
+plot(emission_vars, col = kmeans_results$cluster)
+points(kmeans_results$centers, col = 1:3, pch = 8, cex = 2)
+```
+The code above uses a plot() function creates a scatter plot of the mobile variables, where each point is colored according to its assigned cluster. The points() function adds the cluster centers to the plot, colored according to their index and with a size of 2.
+
+
+clustering is not used because the focus is on predicting a continuous target variable (emissions) using a supervised learning approach, specifically linear regression. Clustering techniques would be more relevant if the task was to identify groups of vehicles with similar properties or patterns without considering the emissions as the target variable.
+
+
+```{r}
+# Install necessary packages
+install.packages("caret", dependencies = c("Depends", "Suggests"))
+install.packages("DiceDesign")
+install.packages("tidymodels")
+install.packages("gower")
+
+# Load necessary libraries
+library(tidymodels)
+
+```
+
+
+
+
+The remaining lines of code are related to the process of creating, training, and evaluating a linear regression model. The further analysis involves data into train and test sets using "tidymodels" package.
+```{r}
+# The line creates a dataset without column "EMISSIONS" and is saved in variable X. The Y variable stores the column "EMISSIONS"
+library(tidymodels)
+X <- z[,-which(names(z) == "EMISSIONS")]
+y <- z$EMISSIONS
+
+#These lines preprocess the data and create a train-test split using the tidymodels package. It involves creating a preprocessing recipe, training it, applying it to the data, and splitting the data into training and testing sets.
+
+# recipe is a way to specify how to transform the raw data into a format suitable for modeling
+recipe_obj <- recipe(EMISSIONS ~ ., data = z)
+
+# Train the preprocessing recipe created earlier. This step calculates any necessary statistics, such as means and standard deviations, required for the preprocessing operations
+trained_recipe <- prep(recipe_obj)
+
+# Apply the trained preprocessing recipe
+data_transformed <- bake(trained_recipe, z)
+
+# Perform the train-test split
+data_split <- initial_split(data_transformed, prop = 2/3, seed = 0)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+# Separate the features and target variable for the training and test sets
+X_train <- train_data[, -which(names(train_data) == "EMISSIONS")]
+y_train <- train_data$EMISSIONS
+X_test <- test_data[, -which(names(test_data) == "EMISSIONS")]
+y_test <- test_data$EMISSIONS
+```
+
+```{r}
+dim(X_train)
+length(y_train)
+```
+The line below shows the creation of linear regression model using the training data
+```{r}
+library(stats)
+
+# Create a linear regression model
+regressor <- lm(y_train ~ ., data = X_train)
+```
+The line below shoes the coefficient of line and intercept printed from the linear regression model
+```{r}
+# Get the coefficients of the linear regression model
+coefficients <- coef(regressor)
+
+# Print the coefficients
+print(coefficients)
+```
+
+```{r}
+# Get the intercept of the linear regression model
+intercept <- coef(regressor)[1]
+
+# Print the intercept
+print(intercept)
+```
+
+The code below shows the performance of our linear regression model 
+```{r}
+library(caret)
+# Make predictions using the linear regression model
+y_pred <- predict(regressor, X_test)
+
+# Compute Mean Absolute Error (MAE)
+mae <- mean(abs(y_test - y_pred))
+print(paste("Mean Absolute Error =", mae))
+
+# Compute R-squared (R2) score
+r2 <- 1 - (sum((y_test - y_pred)^2) / sum((y_test - mean(y_test))^2))
+print(paste("R2 score =", r2))
+# Round the predicted values
+rounded_predictions <- round(y_pred)
+
+# Calculate the accuracy of the model by comparing rounded predictions to the true values
+accuracy <- mean(rounded_predictions == y_test)
+cat("Accuracy of the linear regression model:", accuracy)
+```
+[1] "Mean Absolute Error = 8.86095034687036"
+[1] "R2 score = 0.905086061742227"
+Accuracy of the linear regression model: 0.06433076
+
+```{r}
+print(y_pred)
+```
+
+```{r}
+# Install and load ggplot2 package
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+library(ggplot2)
+
+# Create a data frame with actual and predicted emissions
+plot_data <- data.frame(actual = y_test, predicted = y_pred)
+
+# Create the scatter plot with regression line
+ggplot(plot_data, aes(x = actual, y = predicted)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Regression Plot: Actual vs. Predicted Emissions",
+       x = "Actual Emissions",
+       y = "Predicted Emissions") +
+  theme_minimal()
+```
+```{r}
+# Create a data frame with actual and predicted emissions
+emissions_table <- data.frame(actual = y_test, predicted = y_pred)
+
+# Print the table
+print(emissions_table)
+```
+
+
+
+Polynomial Regression
+
+```{r}
+# Create a recipe pipeline with polynomial features of degree 2
+recipe_obj <- recipe(EMISSIONS ~ ., data = z) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_poly(all_predictors(), degree = 2)
+
+# Train the preprocessing recipe
+trained_recipe <- prep(recipe_obj)
+
+# Apply the trained preprocessing recipe
+data_transformed <- bake(trained_recipe, z)
+
+# Perform the train-test split
+data_split <- initial_split(data_transformed, prop = 2/3, seed = 0)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+# Separate the features and target variable for the training and test sets
+X_train <- train_data[, -which(names(train_data) == "EMISSIONS")]
+y_train <- train_data$EMISSIONS
+X_test <- test_data[, -which(names(test_data) == "EMISSIONS")]
+y_test <- test_data$EMISSIONS
+
+# Fit a linear regression model using the polynomial features
+poly_regressor <- lm(y_train ~ ., data = X_train)
+
+# Make predictions using the polynomial regression model
+y_pred1 <- predict(poly_regressor, X_test)
+
+# Compute Mean Absolute Error (MAE)
+mae1 <- mean(abs(y_test - y_pred1))
+print(paste("Mean Absolute Error =", mae1))
+
+# Compute R-squared (R2) score
+r2_1 <- 1 - (sum((y_test - y_pred1)^2) / sum((y_test - mean(y_test))^2))
+print(paste("R2 score =", r2_1))
+# Round the predicted values
+rounded_predictions <- round(y_pred1)
+
+# Calculate the accuracy of the model by comparing rounded predictions to the true values
+accuracy <- mean(rounded_predictions == y_test)
+cat("Accuracy of the linear regression model:", accuracy)
+```
+[1] "Mean Absolute Error = 7.81707650817709"
+[1] "R2 score = 0.915804116999933"
+Accuracy of the linear regression model: 0.08114926
+
+```{r}
+# Load required libraries
+library(ggplot2)
+
+# Create a dataframe with actual and predicted values for both models
+plot_data <- data.frame(
+  actual = y_test,
+  linear_pred = y_pred,
+  poly_pred = y_pred1
+)
+
+# Compute the differences between actual and predicted values
+plot_data$linear_diff <- plot_data$actual - plot_data$linear_pred
+plot_data$poly_diff <- plot_data$actual - plot_data$poly_pred
+
+# Plot actual vs. predicted emissions values for linear and polynomial regression
+ggplot(plot_data) +
+  geom_point(aes(x = actual, y = linear_pred), color = "blue", alpha = 0.5) +
+  geom_point(aes(x = actual, y = poly_pred), color = "red", alpha = 0.5) +
+  labs(title = "Actual vs. Predicted Emissions",
+       x = "Actual Emissions",
+       y = "Predicted Emissions") +
+  scale_color_manual(values = c("blue", "red"), labels = c("Linear", "Polynomial")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(title = "Regression Type"))
+
+# Plot the differences between actual and predicted values for linear and polynomial regression
+ggplot(plot_data) +
+  geom_line(aes(x = actual, y = linear_diff, color = "Linear")) +
+  geom_line(aes(x = actual, y = poly_diff, color = "Polynomial")) +
+  labs(title = "Difference Between Actual and Predicted Emissions",
+       x = "Actual Emissions",
+       y = "Difference") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("blue", "red"), labels = c("Linear", "Polynomial")) +
+  guides(color = guide_legend(title = "Regression Type"))
+```
+
+This is the predicted value of polynomial regression compared to the linear regression
+```{r}
+emissions_table <- data.frame(actual = y_test, predicted = y_pred1)
+
+# Print the table
+print(emissions_table)
+```
+
+High Performance Computational technique for distributed data analysis using Apache Spark
+Install proper JAVA version 8 or above before proceding to this step
+```{r}
+#prior to do this step install Spark package in R
+library(sparklyr)
+spark_install()
+```
+```{r}
+#this is a mandatory step to establish a connect with Spark. Check the connection on the top right corner of your window
+options(sparklyr.log.console = TRUE)
+sc <- spark_connect(master = "local")
+```
+
+Our previous dataset consists of variable 'z' which consists of all numerical data without outliers. That dataset was imported to the spark cluster for durther distributed data analysis
+```{r}
+# Copy the dataset to Spark
+sdf <- copy_to(sc, z, "z", overwrite = TRUE)
+```
+
+Since we are doing linear regression. The dataset was divided into the following train and test sets. 
+```{r}
+# Perform train-test split
+data_split <- sdf %>% sdf_random_split(training = 0.67, testing = 0.33, seed = 0)
+train_data <- data_split$training
+test_data <- data_split$testing
+```
+
+The data below was converted to the desired format understandable by spark Mllib. Similar to the above mentioned linear regression, EMISSIONS coloumn was omitted from the dataset to further find the correlation between all the independent variables with the dependent's one.
+
+```{r}
+# Linear regression with Spark
+# Convert the dataset to the format required by Spark's MLlib
+train_data_lr <- train_data %>% ft_vector_assembler(input_cols = setdiff(colnames(train_data), "EMISSIONS"), output_col = "lr_features")
+test_data_lr <- test_data %>% ft_vector_assembler(input_cols = setdiff(colnames(test_data), "EMISSIONS"), output_col = "lr_features")
+
+```
+
+Linear regression model based on spark mllib has been shown below.
+```{r}
+# Train the linear regression model
+lr_model <- train_data_lr %>% ml_linear_regression(label_col = "EMISSIONS", features_col = "lr_features")
+```
+
+The coefficients and intercept of the following was calculated based on the linear regression line
+```{r}
+# Print the coefficients
+print(lr_model$coefficients)
+print(lr_model$intercept)
+```
+
+Prediction was further commenced to find out the model efficiency to predict the test data after linear regression model
+```{r}
+predictions <- ml_predict(lr_model, test_data_lr)
+head(predictions, n=10)
+```
+
+Functions to calculate the mean absolute errors and R2 score has been shown below based on spark. 
+```{r}
+
+#ml_regression_evaluator function from SparkR is being used to calculate two different evaluation metrics for a regression model: Mean Absolute Error (MAE) and R-squared (R2). The same function is called twice with different metric_name arguments, which results in different metric calculations.
+
+
+mae_lr <- predictions %>% ml_regression_evaluator(prediction_col = "prediction", label_col = "EMISSIONS", metric_name = "mae")
+r2_lr <- predictions %>% ml_regression_evaluator(prediction_col = "prediction", label_col = "EMISSIONS", metric_name = "r2")
+print(paste("Mean Absolute Error =", mae_lr))
+print(paste("R2 score =", r2_lr))
+# Assuming you have already created the `predictions` dataframe
+# If not, create it using the appropriate functions
+
+# Add a new column to the predictions dataframe to identify correct predictions
+predictions_correct <- predictions %>%
+  mutate(correct = ifelse(EMISSIONS == round(prediction), 1, 0))
+
+# Calculate the total number of correct predictions and the total number of predictions
+summary_stats <- predictions_correct %>%
+  summarise(num_correct = sum(correct), total = n())
+
+# Collect the summary_stats to local R dataframe
+summary_stats_local <- collect(summary_stats)
+
+# Calculate the accuracy
+accuracy <- summary_stats_local$num_correct / summary_stats_local$total
+cat("Accuracy of the Linear Regression model:", accuracy)
+```
+Accuracy of the linear regression model: 0.0628331
+
+```{r}
+# Assuming you have already created the `predictions` dataframe
+# If not, create it using the appropriate functions
+
+# Add a new column to the predictions dataframe to identify correct predictions
+predictions_correct <- predictions %>%
+  mutate(correct = ifelse(EMISSIONS == round(prediction), 1, 0))
+
+# Calculate the total number of correct predictions and the total number of predictions
+summary_stats <- predictions_correct %>%
+  summarise(num_correct = sum(correct), total = n())
+
+# Collect the summary_stats to local R dataframe
+summary_stats_local <- collect(summary_stats)
+
+# Calculate the accuracy
+accuracy <- summary_stats_local$num_correct / summary_stats_local$total
+cat("Accuracy of the Linear Regression model:", accuracy)
+
+```
+
+Polynomial regression using Apache Spark
+
+
+Similar to the linear regression method, the test and train data was prepared. But since the function call out for polynomial regression, a degree of numeric 2 is applied to give us more precise results based on the total distribution of data 
+```{r}
+# Assemble input features
+train_data_assembled <- train_data %>% ft_vector_assembler(input_cols = setdiff(colnames(train_data), "EMISSIONS"), output_col = "features")
+test_data_assembled <- test_data %>% ft_vector_assembler(input_cols = setdiff(colnames(test_data), "EMISSIONS"), output_col = "features")
+
+# Perform polynomial expansion
+train_data_pr <- train_data_assembled %>% ft_polynomial_expansion(degree = 2, input_col = "features", output_col = "poly_features")
+test_data_pr <- test_data_assembled %>% ft_polynomial_expansion(degree = 2, input_col = "features", output_col = "poly_features")
+
+```
+
+
+Since the features are already transported to the polynomial features and stored them into "poly_features" column of the train_data_pr Spark DataFrame, ml_linear_regression function is used.
+
+To clarify, polynomial regression is essentially a linear regression model that uses polynomial features as input. So, by specifying the features_col argument as "poly_features" in the ml_linear_regression function, we are effectively training a polynomial regression model.
+```{r}
+pr_model <- train_data_pr %>% ml_linear_regression(label_col = "EMISSIONS", features_col = "poly_features")
+
+```
+
+Similar function used in above linear regression model for spark is used to predict the test data from the trained train data results
+```{r}
+poly_predictions <- ml_predict(pr_model, test_data_pr)
+```
+
+The function below finds the mean absolute error and R2 score for the polynomial regression
+```{r}
+mae_pr <- poly_predictions %>% ml_regression_evaluator(prediction_col = "prediction", label_col = "EMISSIONS", metric_name = "mae")
+r2_pr <- poly_predictions %>% ml_regression_evaluator(prediction_col = "prediction", label_col = "EMISSIONS", metric_name = "r2")
+
+print(paste("Mean Absolute Error =", mae_pr))
+print(paste("R2 score =", r2_pr))
+```
+
+Accuracy of polynomial regression model is: 
+
+```{r}
+# Assuming you have already created the `poly_predictions` dataframe
+# If not, create it using the appropriate functions
+
+# Add a new column to the poly_predictions dataframe to identify correct predictions
+poly_predictions_correct <- poly_predictions %>%
+  mutate(correct = ifelse(EMISSIONS == round(prediction), 1, 0))
+
+# Calculate the total number of correct predictions and the total number of predictions
+summary_stats <- poly_predictions_correct %>%
+  summarise(num_correct = sum(correct), total = n())
+
+# Collect the summary_stats to local R dataframe
+summary_stats_local <- collect(summary_stats)
+
+# Calculate the accuracy
+accuracy <- summary_stats_local$num_correct / summary_stats_local$total
+cat("Accuracy of the Polynomial Regression model:", accuracy)
+
+```
+[1] "Mean Absolute Error = 6.26696619346182"
+[1] "R2 score = 0.940505338255183"
+Accuracy of the Polynomial Regression model: 0.1200561
+
+```{r}
+# Collect a subset of the actual and predicted values from the linear regression model
+subset_lr <- collect(predictions %>% select(EMISSIONS, prediction) %>% head(100))
+
+# Collect a subset of the actual and predicted values from the polynomial regression model
+subset_pr <- collect(poly_predictions %>% select(EMISSIONS, prediction) %>% head(100))
+
+```
+
+```{r}
+library(ggplot2)
+
+# Linear Regression plot
+lr_plot <- ggplot() +
+  geom_point(data = subset_lr, aes(x = EMISSIONS, y = prediction), color = "blue") +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Linear Regression: Actual vs. Predicted",
+       x = "Actual Emissions",
+       y = "Predicted Emissions") +
+  theme_minimal()
+
+# Polynomial Regression plot
+pr_plot <- ggplot() +
+  geom_point(data = subset_pr, aes(x = EMISSIONS, y = prediction), color = "blue") +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Polynomial Regression: Actual vs. Predicted",
+       x = "Actual Emissions",
+       y = "Predicted Emissions") +
+  theme_minimal()
+
+# Display the plots
+lr_plot
+pr_plot
+
+```
+
